@@ -55,7 +55,6 @@
 		{"name": "ncalmatches", "type": "int", "doc": "Number of 2MASS photometric calibrators used to calibrate science image from science image processing"},
 		{"name": "clrcoeff", "type": ["float", "null"], "default": null, "doc": "Color coefficient from linear fit from photometric calibration of science image"}, 
 		{"name": "clrcounc", "type": ["float", "null"], "default": null, "doc": "Color coefficient uncertainty from linear fit (corresponding to clrcoeff)"},
-		{"name": "zpmed", "type": ["float", "null"], "default": null, "doc": "Magnitude zero point from median of all differences between instrumental photometry and matched photometric calibrators from science image processing [mag]"},
 		{"name": "distnearbrstar", "type": ["float", "null"], "default": null, "doc": "Distance to closest source from 2MASS catalog brighter than magnitude 10; if exists within 60 arcsec [arcsec]"},
 		{"name": "magnearbrstar", "type": ["float", "null"], "default": null, "doc": "2MASS (J-band) magnitude of closest source from 2MASS catalog brighter than magnitude 10; if exists within 60 arcsec [mag]"},
 		{"name": "exptime", "type": ["float", "null"], "default": null, "doc": "Integration time of camera exposure [sec]"},
