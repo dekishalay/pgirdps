@@ -49,7 +49,6 @@
 		{"name": "jdstartref", "type": "double", "doc": "Observation Julian date of earliest exposure used to generate reference image [days]"},
 		{"name": "jdendref", "type": "double", "doc": "Observation Julian date of latest exposure used to generate reference image [days]"},
 		{"name": "nframesref", "type": "int", "doc": "Number of frames (epochal images) used to generate reference image"},
-		{"name": "scorrpeak", "type": ["float", "null"], "default": null, "doc": "Ratio: S/stddev(S) on event position where S = image of convolution: D (x) PSF(D)"},
 		{"name": "magzpsci", "type": ["float", "null"], "default": null, "doc": "Magnitude zero point for photometry estimates [mag]"},
 		{"name": "magzpsciunc", "type": ["float", "null"], "default": null, "doc": "Magnitude zero point uncertainty (in magzpsci) [mag]"}, 
 		{"name": "magzpscirms", "type": ["float", "null"], "default": null, "doc": "RMS (deviation from average) in all differences between instrumental photometry and matched photometric calibrators from science image processing [mag]"}, 
