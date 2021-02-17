@@ -98,7 +98,7 @@ def send(topicname, records, schema):
 
 	out = BytesIO()
 	
-	#print(topicname, records)
+	print(records)
 	
 	fastavro.writer(out, schema, records)
 	out.seek(0) # go back to the beginning
@@ -183,6 +183,9 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 180.0): #cross-
 		prevcand = {}
 		for key in ['jd', 'subid', 'stackquadid', 'diffmaglim', 'program', 'nid', 'quadpos', 'subquadpos', 'field']:
 			prevcand[key] = out[i][key]
+			
+		for key in ['candid', 'isdiffpos', 'nid', 'xpos', 'ypos', 'ra', 'dec', 'magpsf', 'sigmapsf', 'fwhm', 'scorr', 'drb', 'drbversion']:
+			prevcand[key] = None
 		prevcands.append(prevcand)	
 	
 	
@@ -290,28 +293,6 @@ def main(nightid, doast = True, dodone = False, candlimit = 10000):
 		pkt = create_alert_packet(out[i])
 		aplist.append(pkt)
 		send(topicname, [pkt], schema)
-		
-		
-	'''
-	num_update = 0
-	for i in range(len(ra_list)):
-		updkeys = []
-		updvals = []
-		if doztf:
-			updkeys.append('ztf_crossmatch')
-			updvals.append(ztf_ids[i])
-		if doclu:
-			updkeys.append('clu_distance')
-			updvals.append(float(clu_dists[i]))
-		
-		if dorb:
-			
-		dbOps.updateSingleTab(cur, conn, 'candidates', updkeys, updvals, 'candid', candid_list[i])
-		num_update += 1
-
-	print('Updated database entries for %d sources'%num_update)
-
-	'''
 	
 	
 	t1 = time.time()
