@@ -184,7 +184,13 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 	#POPULATE CANDIDATE SUBSCHEMA
 	candidate = {}
 	for key in ['jd', 'stackquadid', 'subid', 'diffmaglim', 'pdiffimfilename', 'program', 'candid', 
-	'isdiffpos', 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'fluxpsf', 'sigmafluxpsf', 'magpsf', 'sigmapsf', 'chipsf', 'magap', 'sigmagap', 'fwhm', 'aimage', 'bimage', 'elong', 'nneg', 'ssdistnr', 'ssmagnr', 'ssnamenr', 'sumrat', 'tmmag1', 'tmdist1', 'tmmag2', 'tmdist2', 'tmmag3', 'tmdist3', 'ndethist', 'jdstarthist', 'scorr', 'jdstartref', 'jdendref', 'nframesref', 'magzpsci', 'magzpsciunc', 'magzpscirms', 'ncalmatches', 'clrcoeff', 'clrcounc', 'distnearbrstar', 'magnearbrstar', 'exptime', 'ndithexp', 'sciweight', 'refweight', 'drb', 'drbversion']:
+	'isdiffpos', 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'fluxpsf',
+	 'sigmafluxpsf', 'magpsf', 'sigmapsf', 'chipsf', 'magap', 'sigmagap', 'fwhm', 'aimage', 'bimage',
+	  'elong', 'nneg', 'ssdistnr', 'ssmagnr', 'ssnamenr', 'sumrat', 'tmmag1', 'tmdist1', 'tmmag2',
+	   'tmdist2', 'tmmag3', 'tmdist3', 'ndethist', 'jdstarthist', 'scorr', 'jdstartref', 'jdendref',
+	    'nframesref', 'magzpsci', 'magzpsciunc', 'magzpscirms', 'ncalmatches', 'clrcoeff', 'clrcounc',
+	    'distnearbrstar', 'magnearbrstar', 'exptime', 'ndithexp', 'sciweight', 'refweight', 'drb',
+	     'drbversion']:
 		candidate[key] = cand[key]
 	
 
@@ -207,7 +213,9 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 	
 	for i in range(len(out)):
 		prevcand = {}
-		for key in ['jd', 'subid', 'stackquadid', 'diffmaglim', 'program', 'candid', 'isdiffpos', 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'magpsf', 'sigmapsf', 'fwhm', 'scorr', 'drb', 'drbversion']:
+		for key in ['jd', 'subid', 'stackquadid', 'diffmaglim', 'program', 'candid', 'isdiffpos',
+		 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'magpsf', 'sigmapsf',
+		  'fwhm', 'scorr', 'drb', 'drbversion']:
 			prevcand[key] = out[i][key]
 		prevcands.append(prevcand)
 		
@@ -227,10 +235,12 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 	
 	for i in range(len(out)):
 		prevcand = {}
-		for key in ['jd', 'subid', 'stackquadid', 'diffmaglim', 'program', 'nid', 'quadpos', 'subquadpos', 'field']:
+		for key in ['jd', 'subid', 'stackquadid', 'diffmaglim', 'program', 'nid', 'quadpos',
+		 'subquadpos', 'field']:
 			prevcand[key] = out[i][key]
 			
-		for key in ['candid', 'isdiffpos', 'nid', 'xpos', 'ypos', 'ra', 'dec', 'magpsf', 'sigmapsf', 'fwhm', 'scorr', 'drb', 'drbversion']:
+		for key in ['candid', 'isdiffpos', 'nid', 'xpos', 'ypos', 'ra', 'dec', 'magpsf', 'sigmapsf',
+		 'fwhm', 'scorr', 'drb', 'drbversion']:
 			prevcand[key] = None
 		prevcands.append(prevcand)	
 	
