@@ -191,7 +191,15 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 	#RETRIEVE AND POPULATE CANDIDATE HISTORY AT THIS POSITION
 	prevcands = []
 	
-	query = 'SELECT cand.jd, cand.subid, cand.stackquadid, sub.limmag as diffmaglim, ss.descript as program, cand.candid, cand.ispos as isdiffpos, cand.nightid as nid, cand.quadpos, cand.subquadpos, cand.field, cand.xpos, cand.ypos, cand.ra, cand.dec, cand.psf_mag as magpsf, cand.psf_mag_err as sigmapsf, cand.fwhm, cand.scorr_peak as scorr, cand.rbscore as drb, cand.rbver as drbversion FROM candidates cand INNER JOIN subtractions sub ON cand.subid = sub.subid INNER JOIN splitstacks ss ON ss.stackquadid = sub.stackquadid WHERE q3c_radial_query(ra, dec, %.5f, %.5f, %.5f) AND cand.jd < %.5f and cand.jd > %.5f;'%(cand['ra'], cand['dec'], cm_radius/3600, cand['jd'], cand['jd'] - search_history)
+	query = "SELECT cand.jd, cand.subid, cand.stackquadid, sub.limmag as diffmaglim,"\
+	  "ss.descript as program, cand.candid, cand.ispos as isdiffpos, cand.nightid as nid,"\
+	  "cand.quadpos, cand.subquadpos, cand.field, cand.xpos, cand.ypos, cand.ra, cand.dec,"\
+	  "cand.psf_mag as magpsf, cand.psf_mag_err as sigmapsf, cand.fwhm, cand.scorr_peak as scorr,"\
+	  "cand.rbscore as drb, cand.rbver as drbversion "\
+	  "FROM candidates cand INNER JOIN subtractions sub ON cand.subid = sub.subid "\
+	  "INNER JOIN splitstacks ss ON ss.stackquadid = sub.stackquadid "\
+	  "WHERE q3c_radial_query(ra, dec, %.5f, %.5f, %.5f)"\
+	  "AND cand.jd < %.5f and cand.jd > %.5f;"%(cand['ra'], cand['dec'], cm_radius/3600, cand['jd'], cand['jd'] - search_history)
 	
 	cur.execute(query)
 	
@@ -205,7 +213,13 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 		
 	#GET UPPER LIMIT HISTORY AT THIS POSITION
 	
-	query = 'SELECT ss.jd, sub.subid, ss.stackquadid, sub.limmag as diffmaglim, ss.descript as program, ss.nightid as nid, ss.quadpos, ss.subquadpos, ss.field FROM subtractions sub INNER JOIN splitstacks ss on ss.stackquadid = sub.stackquadid INNER JOIN candidates c1 ON (sub.field = c1.field AND sub.quadpos = c1.quadpos AND sub.subquadpos = c1.subquadpos) WHERE c1.candid = %d AND NOT EXISTS (SELECT * FROM candidates c2 WHERE q3c_radial_query(c2.ra, c2.dec, c1.ra, c1.dec, %.5f) AND c2.subid = sub.subid) AND ss.jd < %.5f AND ss.jd > %.5f ORDER BY ss.jd'%(cand['candid'], cm_radius/3600, cand['jd'], cand['jd'] - search_history)
+	query = "SELECT ss.jd, sub.subid, ss.stackquadid, sub.limmag as diffmaglim, ss.descript as program,"\
+	"ss.nightid as nid, ss.quadpos, ss.subquadpos, ss.field FROM subtractions sub INNER JOIN"\
+	" splitstacks ss on ss.stackquadid = sub.stackquadid INNER JOIN candidates c1 ON (sub.field ="\
+	" c1.field AND sub.quadpos = c1.quadpos AND sub.subquadpos = c1.subquadpos) WHERE c1.candid = %d  AND"\
+	" NOT EXISTS (SELECT * FROM candidates c2 WHERE q3c_radial_query(c2.ra, c2.dec, c1.ra, c1.dec, %.5f)"\
+	"  AND c2.subid = sub.subid) AND ss.jd < %.5f AND ss.jd > %.5f"\
+	" ORDER BY ss.jd"%(cand['candid'], cm_radius/3600, cand['jd'], cand['jd'] - search_history)
 	
 	cur.execute(query)
 	
