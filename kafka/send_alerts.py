@@ -305,8 +305,7 @@ def main(nightid, redo = False, candlimit = 10000):
 	
 	#Calculate the alert_date for this night
 	minjd = np.min(jd_list)
-	mjd = minjd - 2400000.5
-	alert_date = Time(mjd, format = 'mjd').tt.datetime.strftime('%Y%m%d')
+	alert_date = Time(minjd, format = 'jd').tt.datetime.strftime('%Y%m%d')
 	
 	schema = combine_schemas(["alert_schema/candidate.avsc", "alert_schema/prv_candidate.avsc", "alert_schema/alert.avsc"])
 	
