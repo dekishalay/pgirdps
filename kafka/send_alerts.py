@@ -1,9 +1,21 @@
 import requests 
 import json
 import argparse
+from datetime import datetime
 import numpy as np
 import re
-import io
+import io, psycopg2, psycopg2.extras
+import socket
+import os, sys
+from io import BytesIO
+import fastavro
+import confluent_kafka
+import avro.schema
+import warnings
+warnings.simplefilter('ignore')
+from astropy.io import ascii, fits
+from astropy.time import Time
+import time
 #Should be loaded in at the beginning of the pipeline
 from keras import optimizers
 import gzip
@@ -24,13 +36,90 @@ print("Loaded model from disk")
 # evaluate loaded model on test data
 loaded_model.compile(loss='binary_crossentropy', optimizer=optimizers.adam(lr=3e-4), metrics=['accuracy'])
 
+#read credentials
+userdata = ascii.read('config/gdb.config', format = 'no_header')
+username = userdata['col1'][0]
+password = userdata['col1'][1]
+gattinibot_login = "dbname=gattini user=%s password=%s"%(username, password)
+#print(gattinibot_login)
+hostname = socket.gethostname()
+
+if 'gattinidrp' in hostname:
+	#how to login into the database
+	gattinibot_login += " host=localhost"
+else:
+	#how to login into the database
+	gattinibot_login += " host=gattinidrp"
+	
+	
+	
+def combine_schemas(schema_files):
+	"""Combine multiple nested schemas into a single schema.
+	Taken from Eric's lsst-dm Github page
+	"""
+	known_schemas = avro.schema.Names()
+	print(known_schemas)
+	for s in schema_files:
+		schema = load_single_avsc(s, known_schemas)
+	# using schema.to_json() doesn't fully propagate the nested schemas
+	# work around as below
+	props = dict(schema.props)
+	fields_json = [field.to_json() for field in props['fields']]
+	props['fields'] = fields_json
+	return props
+
+
+def load_single_avsc(file_path, names):
+	"""Load a single avsc file.
+	Taken from Eric's lsst-dm Github page
+	"""
+	curdir = os.path.dirname(__file__)
+	file_path = os.path.join(curdir, file_path)
+
+	with open(file_path) as file_text:
+		json_data = json.load(file_text)
+		
+	schema = avro.schema.SchemaFromJSONData(json_data, names)
+	return schema
+
+
+def send(topicname, records, schema):
+	""" Send an avro "packet" to a particular topic at IPAC
+	Parameters
+	----------
+	topic: name of the topic, e.g. ztf_20191221_programid2_zuds
+	records: a list of dictionaries
+	schema: schema definition
+	"""
+	# Parse the schema file
+	#schema_definition = fastavro.schema.load_schema(schemafile)
+
+	# Write into an in-memory "file"
+
+	out = BytesIO()
+	
+	#print(topicname, records)
+	
+	fastavro.writer(out, schema, records)
+	out.seek(0) # go back to the beginning
+
+	# Connect to the IPAC Kafka brokers
+	producer = confluent_kafka.Producer({'bootstrap.servers': 'ztfalerts04.ipac.caltech.edu:9092,ztfalerts05.ipac.caltech.edu:9092,ztfalerts06.ipac.caltech.edu:9092'})
+
+	# Send an avro alert
+	producer.produce(topic=topicname, value=out.read())
+	producer.flush()
+	
+	print('Sent record')
+	
+
 # Function for predicting RB score
 def RB_score(stack):
 	# stack should be a numpy array of shape (61,61,3)-- a stack of science, reference and difference images
 	image_test= stack[np.newaxis, :, :, :]
 	probs = loaded_model.predict_proba(image_test)
 	return probs[0][0] #returned as float value
-    
+	
 def normalize(image):
 	myimage = image - image.mean()
 	myimage = myimage / myimage.std()
@@ -56,25 +145,103 @@ def getscore(canddict):
 		return -99
 	
 	rbscore = RB_score(stack)
-	print('Candid %d got rbscore of %.2f from nightid %d'%(canddict['candid'], rbscore, canddict['nightid']))
+	print('Candid %d got rbscore of %.2f from nightid %d'%(canddict['candid'], rbscore, canddict['nid']))
 	return float(rbscore)
 	
-	
-	
-def main(nightid, doast = True, dorb = True, skipdone = False):
-	t0 = time.time()
-	conn, cur = dbOps.getDBCursor()
-	
-	if dorb:
-		query = "SELECT cand.candid, ra, dec, jd, cand.nightid, cut.* FROM candidates cand inner join cutouts cut on cut.candid = cand.candid WHERE nightid=%d ORDER BY jd asc LIMIT %d;"%(nightid, candlimit)
-	else:
-		query = "SELECT cand.candid, ra, dec, jd, cand.nightid FROM candidates cand WHERE nightid=%d ORDER BY jd asc LIMIT %d;"%(nightid, candlimit)
 
-	#if skipdone:
-	#	print('Skipping done sources..')
-	#	query = query.replace('ORDER', 'AND rbscore = -1 ORDER')
+def create_alert_packet(cand, cm_radius = 10.0, search_history = 180.0): #cross-match radius in arcsec, history in days
+
+
+	prevcands = []
+	#GET CANDIDATE HISTORY AT THIS POSITION
+	#Connect to PGIR DB
+	conn = psycopg2.connect(gattinibot_login)
+	#Initializing a cursor
+	cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
 	
-	print(query)
+	query = 'SELECT cand.jd, cand.subid, cand.stackquadid, sub.limmag as diffmaglim, ss.descript as program, cand.candid, cand.ispos as isdiffpos, cand.nightid as nid, cand.quadpos, cand.subquadpos, cand.field, cand.xpos, cand.ypos, cand.ra, cand.dec, cand.psf_mag as magpsf, cand.psf_mag_err as sigmapsf, cand.fwhm, cand.scorr_peak as scorr, cand.rbscore as drb, cand.rbver as drbversion FROM candidates cand INNER JOIN subtractions sub ON cand.subid = sub.subid INNER JOIN splitstacks ss ON ss.stackquadid = sub.stackquadid WHERE q3c_radial_query(ra, dec, %.5f, %.5f, %.5f) AND cand.jd < %.5f and cand.jd > %.5f;'%(cand['ra'], cand['dec'], cm_radius/3600, cand['jd'], cand['jd'] - search_history)
+	
+	cur.execute(query)
+	
+	out = cur.fetchall()
+	
+	for i in range(len(out)):
+		prevcand = {}
+		for key in ['jd', 'subid', 'stackquadid', 'diffmaglim', 'program', 'candid', 'isdiffpos', 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'magpsf', 'sigmapsf', 'fwhm', 'scorr', 'drb', 'drbversion']:
+			prevcand[key] = out[i][key]
+		prevcands.append(prevcand)
+		
+	#GET UPPER LIMIT HISTORY AT THIS POSITION
+	
+	query = 'SELECT ss.jd, sub.subid, ss.stackquadid, sub.limmag as diffmaglim, ss.descript as program, ss.nightid as nid, ss.quadpos, ss.subquadpos, ss.field FROM subtractions sub INNER JOIN splitstacks ss on ss.stackquadid = sub.stackquadid INNER JOIN candidates c1 ON (sub.field = c1.field AND sub.quadpos = c1.quadpos AND sub.subquadpos = c1.subquadpos) WHERE c1.candid = %d AND NOT EXISTS (SELECT * FROM candidates c2 WHERE q3c_radial_query(c2.ra, c2.dec, c1.ra, c1.dec, %.5f) AND c2.subid = sub.subid) AND ss.jd < %.5f AND ss.jd > %.5f ORDER BY ss.jd'%(cand['candid'], cm_radius/3600, cand['jd'], cand['jd'] - search_history)
+	
+	cur.execute(query)
+	
+	out = cur.fetchall()
+	
+	for i in range(len(out)):
+		prevcand = {}
+		for key in ['jd', 'subid', 'stackquadid', 'diffmaglim', 'program', 'nid', 'quadpos', 'subquadpos', 'field']:
+			prevcand[key] = out[i][key]
+		prevcands.append(prevcand)	
+	
+	
+	conn.commit()
+	cur.close()
+	conn.close()
+	
+	candidate = {}
+	for key in ['jd', 'stackquadid', 'subid', 'diffmaglim', 'pdiffimfilename', 'program', 'candid', 
+	'isdiffpos', 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'fluxpsf', 'sigmafluxpsf', 'magpsf', 'sigmapsf', 'chipsf', 'magap', 'sigmagap', 'fwhm', 'aimage', 'bimage', 'elong', 'nneg', 'ssdistnr', 'ssmagnr', 'ssnamenr', 'sumrat', 'tmmag1', 'tmdist1', 'tmmag2', 'tmdist2', 'tmmag3', 'tmdist3', 'ndethist', 'jdstarthist', 'scorr', 'jdstartref', 'jdendref', 'nframesref', 'magzpsci', 'magzpsciunc', 'magzpscirms', 'ncalmatches', 'clrcoeff', 'clrcounc', 'distnearbrstar', 'magnearbrstar', 'exptime', 'ndithexp', 'sciweight', 'refweight', 'drb', 'drbversion']:
+		candidate[key] = cand[key]		 
+
+	alert = {"schemavsn": "0.1", "publisher": "pgirdps", 
+		"cutoutScience": bytes(cand['sci_image']), 
+		"cutoutTemplate": bytes(cand['ref_image']),
+		"cutoutDifference": bytes(cand['diff_image']),
+		"candid": cand['candid'], 
+		"candidate": candidate,
+		"prv_candidates": prevcands}
+		
+	return alert
+	
+	
+	
+def main(nightid, doast = True, dodone = False, candlimit = 10000):
+	
+	#Connect to PGIR DB
+	conn = psycopg2.connect(gattinibot_login)
+	#Initializing a cursor
+	cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
+	
+	query = "SELECT cand.candid, "\
+		"cand.jd, cand.stackquadid, cand.subid, cand.candid, cand.ispos as isdiffpos, "\
+		"cand.nightid as nid, cand.quadpos, cand.subquadpos, cand.field, cand.xpos, cand.ypos, "\
+		"cand.ra, cand.dec, cand.flux as fluxpsf, cand.flux_err as sigmafluxpsf, "\
+		"cand.psf_mag as magpsf, cand.psf_mag_err as sigmapsf, cand.psf_chi2 as chipsf, "\
+		"cand.mag as magap, cand.mag_err as sigmagap, cand.fwhm, cand.a_psf as aimage, "\
+		"cand.b_psf as bimage, cand.a_psf/cand.b_psf as elong, cand.numnegpix as nneg, "\
+		"cand.ssdistnr, cand.ssmagnr, cand.ssnamenr, cand.sumrat, cand.distnearbrstar,  "\
+		"cand.magnearbrstar, cand.sci_weight as sciweight, cand.ref_weight as refweight, "\
+		"cand.tmmag1, cand.tmdist1, cand.tmmag2, cand.tmdist2, cand.tmmag3, cand.tmdist3, "\
+		"cand.nmatches as ndethist, cand.firstdet as jdstarthist, cand.scorr_peak as scorr, "\
+		"cand.sent_kafka as sent, sub.limmag as diffmaglim, sub.filename as pdiffimfilename, "\
+		"sp.zp_psf as magzpsci, sp.zp_psf_unc as magzpsciunc, sp.zp_psf_rms as magzpscirms, "\
+		"sp.nstars_l as ncalmatches, sp.color_coeff as clrcoeff, sp.color_coeff_unc as clrcounc, "\
+		"ss.descript as program, ss.exptime, ss.ndithexp, "\
+		"cut.sci_image, cut.ref_image, cut.diff_image, "\
+		"ref.jdstart as jdstartref, ref.jdend as jdendref, ref.numimages as nframesref "\
+		"FROM candidates cand INNER JOIN cutouts cut ON cut.candid = cand.candid "\
+		"INNER JOIN subtractions sub ON cand.subid = sub.subid "\
+		"INNER JOIN splitstacks ss ON ss.stackquadid = sub.stackquadid "\
+		"INNER JOIN squadphoto sp ON sp.stackquadid = ss.stackquadid "\
+		"INNER JOIN reference_new ref ON ref.refid = cand.refid "\
+		"WHERE cand.nightid=%d ORDER BY cand.jd ASC LIMIT %d;"%(nightid, candlimit)
+
+	if not dodone:
+		print('Skipping done sources..')
+		query = query.replace('ORDER', 'AND (NOT sent_kafka OR sent_kafka IS NULL) ORDER')
+	
 	cur.execute(query)
 	out = cur.fetchall()
 
@@ -87,34 +254,45 @@ def main(nightid, doast = True, dorb = True, skipdone = False):
 	if len(ra_list) == 0:
 		return 0
 	
+	#Calculate the alert_date for this night
 	minjd = np.min(jd_list)
+	mjd = minjd - 2400000.5
+	alert_date = Time(mjd, format = 'mjd').tt.datetime.strftime('%Y%m%d')
 	
-	if doztf or doclu:
-		k = getKowalskiCrossmatch(ra_list, dec_list, minjd)
-		if k is None:	
-			print('Kowlaski crossmatch did not work.. Exiting here .. ')
-			return -99
-	else:
-		print('Skipping Kowalski cross-match because not requested ..')
-	
-	pool = ThreadPool()
-	
-	if doztf:
-		ztf_process = pool.apply_async(doZTFcrossmatch, args = (k, candid_list, ra_list, dec_list,))
-	if doclu:
-		clu_process = pool.apply_async(doCLUcrossmatch, args = (k, candid_list, ra_list, dec_list,))
 	if doast:
-		ast_process = pool.apply_async(doSScrossmatch, args = (nightid, candid_list, jd_list, ra_list, dec_list,))
+		ssdists, ssmags, ssnames = doSScrossmatch(nightid, candid_list, jd_list, ra_list, dec_list)
 	
-	if doztf:
-		ztf_ids = ztf_process.get()
-	if doclu:
-		clu_dists = clu_process.get()
-	if doast:
-		ssdists, ssmags, ssnames = ast_process.get()
 	
-	pool.close()	
-	
+	schema = combine_schemas(["alert_schema/candidate.avsc", "alert_schema/prv_candidate.avsc", "alert_schema/alert.avsc"])
+	topicname = 'pgir_%s'%alert_date	
+	aplist = []
+	for i in range(len(ra_list)):
+		updkeys = []
+		updvals = []
+		rbscore = getscore(out[i])
+		updkeys.append('rbscore')
+		updvals.append(rbscore)	
+		updkeys.append('rbver')
+		updvals.append(current_model_json)
+		
+		#print(out[i])
+		out[i]['drb'] = rbscore
+		out[i]['drbversion'] = current_model_json
+		
+		if doast:
+			updkeys.extend(['ssdistnr', 'ssmagnr', 'ssnamenr'])
+			updvals.extend([float(ssdists[i]), float(ssmags[i]), ssnames[i]])
+		
+			out[i]['ssdistnr'] = ssdistnr
+			out[i]['ssmagnr'] = ssmagnr
+			out[i]['ssnamenr'] = ssnamenr
+		
+		pkt = create_alert_packet(out[i])
+		aplist.append(pkt)
+		send(topicname, [pkt], schema)
+		
+		
+	'''
 	num_update = 0
 	for i in range(len(ra_list)):
 		updkeys = []
@@ -125,45 +303,39 @@ def main(nightid, doast = True, dorb = True, skipdone = False):
 		if doclu:
 			updkeys.append('clu_distance')
 			updvals.append(float(clu_dists[i]))
-		if doast:
-			updkeys.extend(['ssdistnr', 'ssmagnr', 'ssnamenr'])
-			updvals.extend([float(ssdists[i]), float(ssmags[i]), ssnames[i]])
+		
 		if dorb:
-			rbscore = getscore(out[i])
-			updkeys.append('rbscore')
-			updvals.append(rbscore)	
-			updkeys.append('rbver')
-			updvals.append(current_model_json)
+			
 		dbOps.updateSingleTab(cur, conn, 'candidates', updkeys, updvals, 'candid', candid_list[i])
 		num_update += 1
 
 	print('Updated database entries for %d sources'%num_update)
-		
-	dbOps.closeCursor(conn, cur)
+
+	'''
+	
 	
 	t1 = time.time()
 	print('Took %.2f seconds to process cross-matching for %d sources'%(t1 - t0, len(ra_list)))
-	return len(ra_list)
+	conn.commit()
+	cur.close()
+	conn.close()
+	
 	
 if __name__ == '__main__':
 	import argparse
 
-	parser = argparse.ArgumentParser(description = 'Code to cross-match Gattini transients to ZTF alerts and CLU galaxies')
+	parser = argparse.ArgumentParser(description = 'Code to produce kafka stream for PGIR transients and send to IPAC topic')
 	parser.add_argument('nightid', help = 'Night ID for cross-match')
-	parser.add_argument('--skipast', help = 'Add to NOT do MPC cross-match', action = 'store_true', default = False)
-	parser.add_argument('--skipdone', help = 'Add to skip sources where cross-match is done', action = 'store_true', default = False)
-	parser.add_argument('--skiprb', help = 'Add to NOT do RB', action = 'store_true', default = False)
+	parser.add_argument('--doast', help = 'Add to NOT do MPC cross-match', action = 'store_true', default = False)
+	parser.add_argument('--dodone', help = 'Add to skip sources where cross-match is done', action = 'store_true', default = False)
 	args = parser.parse_args()
 
-	doast = True
-	dorb = True
-	skipdone = False
+	doast = False
+	dodone = False
 	nightid = args.nightid
-	if args.skipast:
-		doast = False
-	if args.skiprb:
-		dorb = False
-	if args.skipdone:
-		skipdone = True
-	main(int(nightid), doast = doast, dorb = dorb, skipdone = skipdone)
+	if args.doast:
+		doast = True
+	if args.dodone:
+		dodone = True
+	main(int(nightid), doast = doast, dodone = dodone)
 	
