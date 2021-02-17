@@ -11,8 +11,9 @@ from io import BytesIO
 import fastavro
 import confluent_kafka
 import avro.schema
+from avro.datafile import DataFileWriter
+from avro.io import DatumWriter
 import warnings
-warnings.simplefilter('ignore')
 from astropy.io import ascii, fits
 from astropy.time import Time
 import time
@@ -51,6 +52,34 @@ else:
 	#how to login into the database
 	gattinibot_login += " host=gattinidrp"
 	
+	
+def getDBCursor(silent = False):
+	#Let's connect to the DB
+	if not silent:
+		print('Connecting to the gattini database .. ')
+	try:
+		conn = psycopg2.connect(gattinibot_login)
+	except psycopg2.Error as err: 
+		print("I cannot access gattini. ERROR: %s\n"%err)	
+		return -1, -1
+	if not silent:
+		print('I am connected to gattini .. ')
+
+	#Initializing a cursor
+	cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
+	return conn, cur
+	
+def closeCursor(conn, cur, silent = False):
+	try: 
+		conn.commit()
+		cur.close()
+		conn.close()
+	except psycopg2.Error as err:
+		print('Could not close cursor. ERROR: %s\n'%err)
+		return
+	if not silent:
+		print('Closed connection to gattinibot')
+
 	
 	
 def combine_schemas(schema_files):
@@ -98,17 +127,15 @@ def send(topicname, records, schema):
 
 	out = BytesIO()
 	
-	print(records)
-	
 	fastavro.writer(out, schema, records)
 	out.seek(0) # go back to the beginning
-
+	
 	# Connect to the IPAC Kafka brokers
-	producer = confluent_kafka.Producer({'bootstrap.servers': 'ztfalerts04.ipac.caltech.edu:9092,ztfalerts05.ipac.caltech.edu:9092,ztfalerts06.ipac.caltech.edu:9092'})
+	#producer = confluent_kafka.Producer({'bootstrap.servers': 'ztfalerts04.ipac.caltech.edu:9092,ztfalerts05.ipac.caltech.edu:9092,ztfalerts06.ipac.caltech.edu:9092'})
 
 	# Send an avro alert
-	producer.produce(topic=topicname, value=out.read())
-	producer.flush()
+	#producer.produce(topic=topicname, value=out.read())
+	#producer.flush()
 	
 	print('Sent record')
 	
@@ -149,15 +176,20 @@ def getscore(canddict):
 	return float(rbscore)
 	
 
-def create_alert_packet(cand, cm_radius = 10.0, search_history = 180.0): #cross-match radius in arcsec, history in days
+def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cross-match radius in arcsec, history in days
 
-
-	prevcands = []
-	#GET CANDIDATE HISTORY AT THIS POSITION
 	#Connect to PGIR DB
-	conn = psycopg2.connect(gattinibot_login)
-	#Initializing a cursor
-	cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
+	conn, cur = getDBCursor()
+	
+	#POPULATE CANDIDATE SUBSCHEMA
+	candidate = {}
+	for key in ['jd', 'stackquadid', 'subid', 'diffmaglim', 'pdiffimfilename', 'program', 'candid', 
+	'isdiffpos', 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'fluxpsf', 'sigmafluxpsf', 'magpsf', 'sigmapsf', 'chipsf', 'magap', 'sigmagap', 'fwhm', 'aimage', 'bimage', 'elong', 'nneg', 'ssdistnr', 'ssmagnr', 'ssnamenr', 'sumrat', 'tmmag1', 'tmdist1', 'tmmag2', 'tmdist2', 'tmmag3', 'tmdist3', 'ndethist', 'jdstarthist', 'scorr', 'jdstartref', 'jdendref', 'nframesref', 'magzpsci', 'magzpsciunc', 'magzpscirms', 'ncalmatches', 'clrcoeff', 'clrcounc', 'distnearbrstar', 'magnearbrstar', 'exptime', 'ndithexp', 'sciweight', 'refweight', 'drb', 'drbversion']:
+		candidate[key] = cand[key]
+	
+
+	#RETRIEVE AND POPULATE CANDIDATE HISTORY AT THIS POSITION
+	prevcands = []
 	
 	query = 'SELECT cand.jd, cand.subid, cand.stackquadid, sub.limmag as diffmaglim, ss.descript as program, cand.candid, cand.ispos as isdiffpos, cand.nightid as nid, cand.quadpos, cand.subquadpos, cand.field, cand.xpos, cand.ypos, cand.ra, cand.dec, cand.psf_mag as magpsf, cand.psf_mag_err as sigmapsf, cand.fwhm, cand.scorr_peak as scorr, cand.rbscore as drb, cand.rbver as drbversion FROM candidates cand INNER JOIN subtractions sub ON cand.subid = sub.subid INNER JOIN splitstacks ss ON ss.stackquadid = sub.stackquadid WHERE q3c_radial_query(ra, dec, %.5f, %.5f, %.5f) AND cand.jd < %.5f and cand.jd > %.5f;'%(cand['ra'], cand['dec'], cm_radius/3600, cand['jd'], cand['jd'] - search_history)
 	
@@ -189,33 +221,26 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 180.0): #cross-
 		prevcands.append(prevcand)	
 	
 	
-	conn.commit()
-	cur.close()
-	conn.close()
-	
-	candidate = {}
-	for key in ['jd', 'stackquadid', 'subid', 'diffmaglim', 'pdiffimfilename', 'program', 'candid', 
-	'isdiffpos', 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'fluxpsf', 'sigmafluxpsf', 'magpsf', 'sigmapsf', 'chipsf', 'magap', 'sigmagap', 'fwhm', 'aimage', 'bimage', 'elong', 'nneg', 'ssdistnr', 'ssmagnr', 'ssnamenr', 'sumrat', 'tmmag1', 'tmdist1', 'tmmag2', 'tmdist2', 'tmmag3', 'tmdist3', 'ndethist', 'jdstarthist', 'scorr', 'jdstartref', 'jdendref', 'nframesref', 'magzpsci', 'magzpsciunc', 'magzpscirms', 'ncalmatches', 'clrcoeff', 'clrcounc', 'distnearbrstar', 'magnearbrstar', 'exptime', 'ndithexp', 'sciweight', 'refweight', 'drb', 'drbversion']:
-		candidate[key] = cand[key]		 
+	closeCursor(conn, cur)		 
 
 	alert = {"schemavsn": "0.1", "publisher": "pgirdps", 
-		"cutoutScience": bytes(cand['sci_image']), 
-		"cutoutTemplate": bytes(cand['ref_image']),
-		"cutoutDifference": bytes(cand['diff_image']),
+		"cutoutScience": io.BytesIO(cand['sci_image']).read(),
+		"cutoutTemplate": io.BytesIO(cand['ref_image']).read(),
+		"cutoutDifference": io.BytesIO(cand['diff_image']).read(),
 		"candid": cand['candid'], 
-		"candidate": candidate,
-		"prv_candidates": prevcands}
+		'candidate': candidate,
+		"prv_candidates": prevcands
+		}
 		
 	return alert
 	
 	
 	
-def main(nightid, doast = True, dodone = False, candlimit = 10000):
+def main(nightid, redo = False, candlimit = 10000):
 	
+	t0 = time.time()
 	#Connect to PGIR DB
-	conn = psycopg2.connect(gattinibot_login)
-	#Initializing a cursor
-	cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
+	conn, cur = getDBCursor()
 	
 	query = "SELECT cand.candid, "\
 		"cand.jd, cand.stackquadid, cand.subid, cand.candid, cand.ispos as isdiffpos, "\
@@ -241,7 +266,7 @@ def main(nightid, doast = True, dodone = False, candlimit = 10000):
 		"INNER JOIN reference_new ref ON ref.refid = cand.refid "\
 		"WHERE cand.nightid=%d ORDER BY cand.jd ASC LIMIT %d;"%(nightid, candlimit)
 
-	if not dodone:
+	if not redo:
 		print('Skipping done sources..')
 		query = query.replace('ORDER', 'AND (NOT sent_kafka OR sent_kafka IS NULL) ORDER')
 	
@@ -249,12 +274,9 @@ def main(nightid, doast = True, dodone = False, candlimit = 10000):
 	out = cur.fetchall()
 
 	jd_list = np.array([o['jd'] for o in out])
-	candid_list = np.array([o['candid'] for o in out])
-	ra_list = np.array([float(o['ra']) for o in out])
-	dec_list = np.array([float(o['dec']) for o in out])
 
-	print('Found %d candidates to process'%(len(ra_list)))
-	if len(ra_list) == 0:
+	print('Found %d candidates to process'%(len(jd_list)))
+	if len(jd_list) == 0:
 		return 0
 	
 	#Calculate the alert_date for this night
@@ -262,33 +284,14 @@ def main(nightid, doast = True, dodone = False, candlimit = 10000):
 	mjd = minjd - 2400000.5
 	alert_date = Time(mjd, format = 'mjd').tt.datetime.strftime('%Y%m%d')
 	
-	if doast:
-		ssdists, ssmags, ssnames = doSScrossmatch(nightid, candid_list, jd_list, ra_list, dec_list)
-	
-	
 	schema = combine_schemas(["alert_schema/candidate.avsc", "alert_schema/prv_candidate.avsc", "alert_schema/alert.avsc"])
+	
 	topicname = 'pgir_%s'%alert_date	
 	aplist = []
-	for i in range(len(ra_list)):
-		updkeys = []
-		updvals = []
-		rbscore = getscore(out[i])
-		updkeys.append('rbscore')
-		updvals.append(rbscore)	
-		updkeys.append('rbver')
-		updvals.append(current_model_json)
-		
-		#print(out[i])
+	for i in range(len(jd_list)):
+		rbscore = getscore(out[i])		
 		out[i]['drb'] = rbscore
 		out[i]['drbversion'] = current_model_json
-		
-		if doast:
-			updkeys.extend(['ssdistnr', 'ssmagnr', 'ssnamenr'])
-			updvals.extend([float(ssdists[i]), float(ssmags[i]), ssnames[i]])
-		
-			out[i]['ssdistnr'] = ssdistnr
-			out[i]['ssmagnr'] = ssmagnr
-			out[i]['ssnamenr'] = ssnamenr
 		
 		pkt = create_alert_packet(out[i])
 		aplist.append(pkt)
@@ -297,9 +300,9 @@ def main(nightid, doast = True, dodone = False, candlimit = 10000):
 	
 	t1 = time.time()
 	print('Took %.2f seconds to process cross-matching for %d sources'%(t1 - t0, len(ra_list)))
-	conn.commit()
-	cur.close()
-	conn.close()
+	
+	
+	closeCursor(conn, cur)
 	
 	
 if __name__ == '__main__':
@@ -307,16 +310,12 @@ if __name__ == '__main__':
 
 	parser = argparse.ArgumentParser(description = 'Code to produce kafka stream for PGIR transients and send to IPAC topic')
 	parser.add_argument('nightid', help = 'Night ID for cross-match')
-	parser.add_argument('--doast', help = 'Add to NOT do MPC cross-match', action = 'store_true', default = False)
-	parser.add_argument('--dodone', help = 'Add to skip sources where cross-match is done', action = 'store_true', default = False)
+	parser.add_argument('--redo', help = 'Add to resend sources that have already been sent', action = 'store_true', default = False)
 	args = parser.parse_args()
 
-	doast = False
-	dodone = False
+	redo = False
 	nightid = args.nightid
-	if args.doast:
-		doast = True
-	if args.dodone:
-		dodone = True
-	main(int(nightid), doast = doast, dodone = dodone)
+	if args.redo:
+		redo = True
+	main(int(nightid), redo = redo)
 	
