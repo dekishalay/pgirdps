@@ -11,6 +11,7 @@ from io import BytesIO
 import fastavro
 import confluent_kafka
 import avro.schema
+import multiprocessing as mp
 from avro.datafile import DataFileWriter
 from avro.io import DatumWriter
 import warnings
@@ -150,7 +151,7 @@ def normalize(image):
 	myimage = myimage / myimage.std()
 	return myimage	
 
-def getscore(canddict):
+def getscore(canddict, silent = False):
 	try:
 		sci_cutout = fits.open(io.BytesIO(gzip.open(io.BytesIO(canddict['sci_image']), 'rb').read()))[0].data
 		ref_cutout = fits.open(io.BytesIO(gzip.open(io.BytesIO(canddict['ref_image']), 'rb').read()))[0].data
@@ -170,14 +171,15 @@ def getscore(canddict):
 		return -99
 	
 	rbscore = RB_score(stack)
-	print('Candid %d got rbscore of %.2f from nightid %d'%(canddict['candid'], rbscore, canddict['nid']))
+	if not silent:
+		print('Candid %d got rbscore of %.2f from nightid %d'%(canddict['candid'], rbscore, canddict['nid']))
 	return float(rbscore)
 	
 
-def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cross-match radius in arcsec, history in days
+def create_alert_packet(cand, scicut, refcut, diffcut, cm_radius = 10.0, search_history = 18000.0): #cross-match radius in arcsec, history in days
 
 	#Connect to PGIR DB
-	conn, cur = getDBCursor()
+	conn, cur = getDBCursor(silent = True)
 	
 	#POPULATE CANDIDATE SUBSCHEMA
 	candidate = {}
@@ -246,12 +248,12 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 		prevcands.append(prevcand)	
 	
 	
-	closeCursor(conn, cur)		 
+	closeCursor(conn, cur, silent = True)		 
 
 	alert = {"schemavsn": "0.1", "publisher": "pgirdps", 
-		"cutoutScience": io.BytesIO(cand['sci_image']).read(),
-		"cutoutTemplate": io.BytesIO(cand['ref_image']).read(),
-		"cutoutDifference": io.BytesIO(cand['diff_image']).read(),
+		"cutoutScience": scicut,
+		"cutoutTemplate": refcut,
+		"cutoutDifference": diffcut,
 		"candid": cand['candid'], 
 		"candidate": candidate,
 		"prv_candidates": prevcands
@@ -259,9 +261,14 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 		
 	return alert
 	
+def broadcast_alert_packet(cand, scicut, refcut, diffcut, topicname, schema):
+		
+	pkt = create_alert_packet(cand, scicut, refcut, diffcut)
+	send(topicname, [pkt], schema)
+	print('Sent candid %d'%cand['candid'])
+	return 1
 	
-	
-def main(nightid, redo = False, candlimit = 10000):
+def main(nightid, redo = False, candlimit = 10000, rbcut = 0.0):
 	
 	t0 = time.time()
 	#Connect to PGIR DB
@@ -296,12 +303,12 @@ def main(nightid, redo = False, candlimit = 10000):
 		query = query.replace('ORDER', 'AND (NOT sent_kafka OR sent_kafka IS NULL) ORDER')
 	
 	cur.execute(query)
-	out = cur.fetchall()
+	candlist = cur.fetchall()
 
-	jd_list = np.array([o['jd'] for o in out])
-
-	print('Found %d candidates to process'%(len(jd_list)))
-	if len(jd_list) == 0:
+	jd_list = np.array([o['jd'] for o in candlist])
+	num_cands = len(jd_list)
+	print('Found %d candidates to process'%(num_cands))
+	if num_cands == 0:
 		return 0
 	
 	#Calculate the alert_date for this night
@@ -312,19 +319,31 @@ def main(nightid, redo = False, candlimit = 10000):
 	
 	topicname = 'pgir_%s'%alert_date	
 	aplist = []
-	for i in range(len(jd_list)):
-		rbscore = getscore(out[i])		
-		out[i]['drb'] = rbscore
-		out[i]['drbversion'] = current_model_json
+	for i in range(num_cands):
+		rbscore = getscore(candlist[i], silent = True)		
+		candlist[i]['drb'] = rbscore
+		candlist[i]['drbversion'] = current_model_json
 		
-		pkt = create_alert_packet(out[i])
-		aplist.append(pkt)
-		send(topicname, [pkt], schema)
-		print('Sent candid %d'%out[i]['candid'])
+	#Now create and broadcast alert packets in parallel
+	pool = mp.Pool(processes = 10)
+	process_list = []
+	for i in range(num_cands):
+		if candlist[i]['drb'] < rbcut:
+			continue
+			
+		canddict = candlist[i].copy()
+		#converting memoryview cutouts to bytes before sending to parallelized broadcast
+		scicut = io.BytesIO(canddict.pop('sci_image')).read()
+		refcut = io.BytesIO(canddict.pop('ref_image')).read()
+		diffcut = io.BytesIO(canddict.pop('diff_image')).read()
+		process_list.append(pool.apply_async(broadcast_alert_packet, args = (canddict, scicut, refcut, diffcut, topicname, schema,)))
 	
+	num_broadcast = len(process_list)
+	results = [p.get() for p in process_list]
+	pool.close()
 	
 	t1 = time.time()
-	print('Took %.2f seconds to process cross-matching for %d sources'%(t1 - t0, len(jd_list)))
+	print('Took %.2f seconds to process %d candidates and broadcast %d candidates'%(t1 - t0, num_cands, num_broadcast))
 	
 	
 	closeCursor(conn, cur)
