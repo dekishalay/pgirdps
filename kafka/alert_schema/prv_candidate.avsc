@@ -25,6 +25,6 @@
 		{"name": "fwhm", "type": ["float", "null"], "default": null, "doc": "Full Width Half Max assuming a Gaussian core, from SExtractor [pixels]"},
 		{"name": "scorr", "type": ["double", "null"], "default": null, "doc": "Peak-pixel signal-to-noise ratio in point source matched-filtered detection image"},
 		{"name": "drb", "type": ["float", "null"], "default": null, "doc": "RealBogus quality score from Deep-Learning-based classifier; range is 0 to 1 where closer to 1 is more reliable"},
-		{"name": "drbversion", "type": "string", "doc": "version of Deep-Learning-based classifier model used to assign RealBogus (drb) quality score"}
+		{"name": "drbversion", "type": ["string", "null"], "doc": "version of Deep-Learning-based classifier model used to assign RealBogus (drb) quality score"}
 			]
 }

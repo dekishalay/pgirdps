@@ -42,7 +42,7 @@ userdata = ascii.read('config/gdb.config', format = 'no_header')
 username = userdata['col1'][0]
 password = userdata['col1'][1]
 gattinibot_login = "dbname=gattini user=%s password=%s"%(username, password)
-#print(gattinibot_login)
+
 hostname = socket.gethostname()
 
 if 'gattinidrp' in hostname:
@@ -87,7 +87,7 @@ def combine_schemas(schema_files):
 	Taken from Eric's lsst-dm Github page
 	"""
 	known_schemas = avro.schema.Names()
-	print(known_schemas)
+	#print(known_schemas)
 	for s in schema_files:
 		schema = load_single_avsc(s, known_schemas)
 	# using schema.to_json() doesn't fully propagate the nested schemas
@@ -131,13 +131,11 @@ def send(topicname, records, schema):
 	out.seek(0) # go back to the beginning
 	
 	# Connect to the IPAC Kafka brokers
-	#producer = confluent_kafka.Producer({'bootstrap.servers': 'ztfalerts04.ipac.caltech.edu:9092,ztfalerts05.ipac.caltech.edu:9092,ztfalerts06.ipac.caltech.edu:9092'})
+	producer = confluent_kafka.Producer({'bootstrap.servers': 'ztfalerts04.ipac.caltech.edu:9092,ztfalerts05.ipac.caltech.edu:9092,ztfalerts06.ipac.caltech.edu:9092'})
 
 	# Send an avro alert
-	#producer.produce(topic=topicname, value=out.read())
-	#producer.flush()
-	
-	print('Sent record')
+	producer.produce(topic=topicname, value=out.read())
+	producer.flush()
 	
 
 # Function for predicting RB score
@@ -183,8 +181,7 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 	
 	#POPULATE CANDIDATE SUBSCHEMA
 	candidate = {}
-	for key in ['jd', 'stackquadid', 'subid', 'diffmaglim', 'pdiffimfilename', 'program', 'candid', 
-	'isdiffpos', 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'fluxpsf',
+	for key in ['jd', 'stackquadid', 'subid', 'diffmaglim', 'pdiffimfilename', 'program', 'candid', 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'fluxpsf',
 	 'sigmafluxpsf', 'magpsf', 'sigmapsf', 'chipsf', 'magap', 'sigmagap', 'fwhm', 'aimage', 'bimage',
 	  'elong', 'nneg', 'ssdistnr', 'ssmagnr', 'ssnamenr', 'sumrat', 'tmmag1', 'tmdist1', 'tmmag2',
 	   'tmdist2', 'tmmag3', 'tmdist3', 'ndethist', 'jdstarthist', 'scorr', 'jdstartref', 'jdendref',
@@ -192,6 +189,8 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 	    'distnearbrstar', 'magnearbrstar', 'exptime', 'ndithexp', 'sciweight', 'refweight', 'drb',
 	     'drbversion']:
 		candidate[key] = cand[key]
+	if cand['isdiffpos'] == 1:
+		candidate['isdiffpos'] = '1'
 	
 
 	#RETRIEVE AND POPULATE CANDIDATE HISTORY AT THIS POSITION
@@ -213,10 +212,12 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 	
 	for i in range(len(out)):
 		prevcand = {}
-		for key in ['jd', 'subid', 'stackquadid', 'diffmaglim', 'program', 'candid', 'isdiffpos',
+		for key in ['jd', 'subid', 'stackquadid', 'diffmaglim', 'program', 'candid',
 		 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'magpsf', 'sigmapsf',
 		  'fwhm', 'scorr', 'drb', 'drbversion']:
 			prevcand[key] = out[i][key]
+		if out[i]['isdiffpos'] == 1:
+			prevcand['isdiffpos'] = '1'
 		prevcands.append(prevcand)
 		
 	#GET UPPER LIMIT HISTORY AT THIS POSITION
@@ -236,10 +237,10 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 	for i in range(len(out)):
 		prevcand = {}
 		for key in ['jd', 'subid', 'stackquadid', 'diffmaglim', 'program', 'nid', 'quadpos',
-		 'subquadpos', 'field']:
+		 'subquadpos', 'field', 'nid']:
 			prevcand[key] = out[i][key]
 			
-		for key in ['candid', 'isdiffpos', 'nid', 'xpos', 'ypos', 'ra', 'dec', 'magpsf', 'sigmapsf',
+		for key in ['candid', 'isdiffpos', 'xpos', 'ypos', 'ra', 'dec', 'magpsf', 'sigmapsf',
 		 'fwhm', 'scorr', 'drb', 'drbversion']:
 			prevcand[key] = None
 		prevcands.append(prevcand)	
@@ -252,7 +253,7 @@ def create_alert_packet(cand, cm_radius = 10.0, search_history = 18000.0): #cros
 		"cutoutTemplate": io.BytesIO(cand['ref_image']).read(),
 		"cutoutDifference": io.BytesIO(cand['diff_image']).read(),
 		"candid": cand['candid'], 
-		'candidate': candidate,
+		"candidate": candidate,
 		"prv_candidates": prevcands
 		}
 		
@@ -319,10 +320,11 @@ def main(nightid, redo = False, candlimit = 10000):
 		pkt = create_alert_packet(out[i])
 		aplist.append(pkt)
 		send(topicname, [pkt], schema)
+		print('Sent candid %d'%out[i]['candid'])
 	
 	
 	t1 = time.time()
-	print('Took %.2f seconds to process cross-matching for %d sources'%(t1 - t0, len(ra_list)))
+	print('Took %.2f seconds to process cross-matching for %d sources'%(t1 - t0, len(jd_list)))
 	
 	
 	closeCursor(conn, cur)
