@@ -183,7 +183,8 @@ def create_alert_packet(cand, scicut, refcut, diffcut, cm_radius = 10.0, search_
 	
 	#POPULATE CANDIDATE SUBSCHEMA
 	candidate = {}
-	for key in ['jd', 'stackquadid', 'subid', 'diffmaglim', 'pdiffimfilename', 'program', 'candid', 'nid', 'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'fluxpsf',
+	for key in ['jd', 'stackquadid', 'subid', 'diffmaglim', 'pdiffimfilename', 'program', 'candid', 'nid',
+	'quadpos', 'subquadpos', 'field', 'xpos', 'ypos', 'ra', 'dec', 'fluxpsf',
 	 'sigmafluxpsf', 'magpsf', 'sigmapsf', 'chipsf', 'magap', 'sigmagap', 'fwhm', 'aimage', 'bimage',
 	  'elong', 'nneg', 'ssdistnr', 'ssmagnr', 'ssnamenr', 'sumrat', 'tmmag1', 'tmdist1', 'tmmag2',
 	   'tmdist2', 'tmmag3', 'tmdist3', 'ndethist', 'jdstarthist', 'scorr', 'jdstartref', 'jdendref',
