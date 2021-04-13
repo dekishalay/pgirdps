@@ -269,7 +269,7 @@ def broadcast_alert_packet(cand, scicut, refcut, diffcut, topicname, schema):
 	print('Sent candid %d'%cand['candid'])
 	return 1
 	
-def main(nightid, redo = False, candlimit = 10000, rbcut = 0.0):
+def main(nightid, redo = False, candlimit = 200000, rbcut = 0.5):
 	
 	t0 = time.time()
 	#Connect to PGIR DB
