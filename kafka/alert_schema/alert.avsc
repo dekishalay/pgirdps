@@ -10,6 +10,7 @@
 		{"name": "cutoutScience", "type": "bytes", "doc": "science cutout image [gzipped fits bytestream]"},
 		{"name": "cutoutTemplate", "type": "bytes", "doc": "cutout of template image [gzipped fits bytestream]"},
 		{"name": "cutoutDifference", "type": "bytes", "doc": "difference image cutout [gzipped fits bytestream]"},
+		{"name": "objectId", "type": "string"},
 		{"name": "candid", "type": "long"},
 		{"name": "candidate", "type": "pgir.alert.candidate", "doc": "candidate information"},
 		{"name": "prv_candidates", "type": [{
