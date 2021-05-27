@@ -57,9 +57,12 @@ import avro.schema
 from avro.datafile import DataFileWriter
 from avro.io import DatumWriter
 
+#Define the main working directory
+homedir = '/data/kde/pgirdps/'
+
 hostname = socket.gethostname()
 #read credentials
-userdata = ascii.read('config/gdb.config', format = 'no_header')
+userdata = ascii.read(os.path.join(homedir, 'config/gdb.config'), format = 'no_header')
 username = userdata['col1'][0]
 password = userdata['col1'][1]
 gattinibot_login = "dbname=gattini user=%s password=%s"%(username, password)
@@ -100,14 +103,14 @@ nightReportFolder = '/scr3/kde/survey/nightreports/'
 #Subtraction reports are stored at this location
 subtraction_report_folder = '/scr3/mhankins/ImgSub/logfiles/'
 
-pgiremaildata = ascii.read('config/gattiniir.email.config', format = 'no_header')
+pgiremaildata = ascii.read(os.path.join(homedir, 'config/gattiniir.email.config'), format = 'no_header')
 #Email address that sends the night report
 nightReportSender = pgiremaildata['col1'][0]
 #Password for night report sender
 nightReportPassword = pgiremaildata['col1'][1]
 #nightReportRecipients = ['kde@astro.caltech.edu','dekishalay@gmail.com']
 #Night report is sent to these addresses
-pgirmaillist = ascii.read('config/pgirmail.rec.list', format = 'no_header')
+pgirmaillist = ascii.read(os.path.join(homedir, 'config/pgirmail.rec.list'), format = 'no_header')
 nightReportRecipients = np.array(pgirmaillist['col1'])
 
 #Location of incoming files from Palomar
