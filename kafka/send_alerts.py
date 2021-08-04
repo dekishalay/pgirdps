@@ -454,7 +454,7 @@ def check_and_insert_source(conn, cur, candname, ra, dec, candid, cm_radius = 8.
 
 		
 
-def main(nightid, redo = False, skiprb = False, skipss = False, candlimit = 100, rbcut = 0.5):
+def main(nightid, redo = False, skiprb = False, skipss = False, candlimit = 10000, rbcut = 0.5):
 	
 	t0 = time.time()
 	#Connect to PGIR DB
