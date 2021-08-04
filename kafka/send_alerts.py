@@ -115,6 +115,148 @@ def getscore(canddict, silent = False):
 		print('Candid %d got rbscore of %.2f from nightid %d'%(canddict['candid'], rbscore, canddict['nid']))
 	return float(rbscore)
 	
+	
+def read_astcheck_file(astfile):
+	output = astfile.readlines()
+	
+	output = [x.strip() for x in output]
+	candnums = []
+	ssdists = []
+	ssmags = []
+	ssnames = []
+
+	for i in range(len(output)):
+		line = output[i]
+		words = line.split()
+		if 'only' in words:
+			candnum = int(line.split()[0][:-1])
+
+			if len(candnums)!=0 and candnum < max(candnums):
+				print('ERROR: Looks like an object is missing in the cross-match .. Exit')
+				sys.exit(1)
+
+			candline = output[i+1]
+			if len(candline.split()) == 0:
+				ssdist = -99
+				ssmag = -99
+				ssname = 'NONE'
+
+			else:
+				if re.search('[a-zA-Z]', candline.split()[1]):
+					try:
+						ssdist = float(candline.split()[4])
+					except ValueError:
+						print('Could not parse distance for candidate %d'%candnum)
+						ssdist = -999
+					try:
+						ssmag = float(candline.split()[5])
+					except ValueError:
+						print('Could not parse mag for candidate %d'%candnum)
+						ssmag = -999
+					try:
+						ssname = " ".join(candline.split()[0:2])
+					except ValueError:
+						print('Could not parse name for candidate %d'%candnum)
+						ssname = 'ERROR'
+						
+				else:
+					try:
+						ssdist = float(candline.split()[3])
+					except ValueError:
+						print('Could not parse distance for candidate %d'%candnum)
+						ssdist = -999
+					try:
+						ssmag = float(candline.split()[4])
+					except ValueError:
+						print('Could not parse mag for candidate %d'%candnum)
+						ssmag = -999
+					try:
+						ssname = candline.split()[0]
+					except ValueError:
+						print('Could not parse name for candidate %d'%candnum)
+						ssname = 'ERROR'
+						
+				print('Candidate number %d is %.2f arcsec away from %.2f mag rock %s'%(candnum, ssdist, ssmag, ssname))
+			
+			candnums.append(candnum)
+			ssdists.append(ssdist)
+			ssmags.append(ssmag)
+			ssnames.append(ssname)
+			
+	return np.array(candnums), np.array(ssdists), np.array(ssmags), np.array(ssnames)
+	
+	
+def ss_crossmatch(nightid, jd_list, ra_list, dec_list):
+
+	print('Doing asteroid cross-matches for %d candidates .. '%len(jd_list))
+	#Now do the asteroid cross-matches
+	curdir = os.getcwd()
+	os.chdir(mpc_cat_folder)
+	astp_timelist = Time(jd_list, format = 'jd')
+	sky_coord_list = SkyCoord(ra = ra_list, dec = dec_list, unit = 'degree', frame = 'icrs')
+	
+	candlistfile = mpc_night_folder + 'sscm_nightid%d.txt'%nightid
+	
+	f = open(candlistfile, 'w')
+	for i in range(len(ra_list)):
+		year = astp_timelist[i].datetime.year
+		month = astp_timelist[i].datetime.month
+		day = astp_timelist[i].datetime.day
+		datefrac = (astp_timelist[i].datetime.hour + astp_timelist[i].datetime.minute / 60 + astp_timelist[i].datetime.second / 3600) / 24.0
+		rahour = sky_coord_list[i].ra.hms.h
+		ramin = sky_coord_list[i].ra.hms.m
+		rasec = sky_coord_list[i].ra.hms.s
+		decdeg = sky_coord_list[i].dec.dms.d
+		decmin = sky_coord_list[i].dec.dms.m
+		decsec = sky_coord_list[i].dec.dms.s
+
+		if decdeg < 0 or decmin < 0 or decsec <0:
+			f.write('%12d  C%d %02d %08.5f %02d %02d %05.2f -%02d %02d %04.1f          99.9 f      I41\n'%(i, year, month, day + datefrac, rahour, ramin, rasec, abs(decdeg), abs(decmin), abs(decsec)))
+		else:
+			f.write('%12d  C%d %02d %08.5f %02d %02d %05.2f +%02d %02d %04.1f          99.9 f      I41\n'%(i, year, month, day + datefrac, rahour, ramin, rasec, abs(decdeg), abs(decmin), abs(decsec)))
+
+	f.close()
+	
+	astcheck_command = ['lunar/astcheck', candlistfile, '-p.', '-r%.2f'%ast_cm_radius]
+	print(astcheck_command)
+	#if os.path.exists(candlistfile + '.astcheck'):
+	#	os.remove(candlistfile + '.astcheck')
+
+	try:
+		rval = subprocess.run(astcheck_command, check = True, stdout = subprocess.PIPE)
+	except subprocess.CalledProcessError as err:
+		print('Could not run astcheck .. ')
+		return
+
+	f = open(candlistfile + '.astcheck', 'w')
+	f.write(rval.stdout.decode('utf-8'))
+	f.close()
+	
+	os.chdir(curdir)
+
+	return mpc_cat_folder + candlistfile
+	
+	
+	
+def doSScrossmatch(nightid, candid_list, jd_list, ra_list, dec_list):
+
+	candlistfile = ss_crossmatch(nightid, jd_list, ra_list, dec_list)
+	#DO THE ASTEROID CROSS_MATCHES HERE
+	if candlistfile is not None:
+		g = open(candlistfile + '.astcheck', 'r')
+		candnums, ssdists, ssmags, ssnames = read_astcheck_file(g)
+		g.close()
+	else:
+		ssdists = [-999 for c in candid_list]
+		ssmags = [-999 for c in candid_list]
+		ssnames = ['FAILED' for c in candid_list]
+
+	if len(ssdists) != len(candid_list):
+		print('ERROR: List of MPC candidates not the same as input candidates')
+		return None, None, None
+	
+	return ssdists, ssmags, ssnames
+	
 
 def create_alert_packet(cand, scicut, refcut, diffcut, cur, conn, cm_radius = 8.0, search_history = 90.0): #cross-match radius in arcsec, history in days
 	
@@ -305,7 +447,7 @@ def check_and_insert_source(conn, cur, candname, ra, dec, candid, cm_radius = 8.
 
 		
 
-def main(nightid, redo = False, candlimit = 50000, rbcut = 0.5):
+def main(nightid, redo = False, skiprb = False, skipss = False, candlimit = 100, rbcut = 0.5):
 	
 	t0 = time.time()
 	#Connect to PGIR DB
@@ -319,7 +461,7 @@ def main(nightid, redo = False, candlimit = 50000, rbcut = 0.5):
 		"cand.mag as magap, cand.mag_err as sigmagap, cand.fwhm, cand.a_psf as aimage, "\
 		"cand.b_psf as bimage, cand.a_psf/cand.b_psf as elong, cand.numnegpix as nneg, "\
 		"cand.ssdistnr, cand.ssmagnr, cand.ssnamenr, cand.isstar, cand.sumrat, cand.dmag2mass,"\
-		"cand.distnearbrstar, "\
+		"cand.distnearbrstar, cand.rbscore, cand.rbver, "\
 		"cand.magnearbrstar, cand.sci_weight as sciweight, cand.ref_weight as refweight, "\
 		"cand.tmmag1, cand.tmdist1, cand.tmmag2, cand.tmdist2, cand.tmmag3, cand.tmdist3, "\
 		"cand.nmatches as ndethist, cand.firstdet as jdstarthist, cand.scorr_peak as scorr, "\
@@ -339,6 +481,14 @@ def main(nightid, redo = False, candlimit = 50000, rbcut = 0.5):
 	if not redo:
 		print('Skipping done sources..')
 		query = query.replace('ORDER', 'AND (NOT sent_kafka OR sent_kafka IS NULL) ORDER')
+		
+	if skiprb:
+		print('Skipping RB computation and using only RB-existing candidates')
+		query = query.replace('WHERE', 'WHERE cand.rbscore != -1 AND')
+		
+	if skipss:
+		print('Skiping SS crossmatch and using only SS existing candidates')
+		query = query.replace('WHERE', 'WHERE cand.ssdistnr != -99 AND')
 	
 	cur.execute(query)
 	candlist = cur.fetchall()
@@ -349,7 +499,10 @@ def main(nightid, redo = False, candlimit = 50000, rbcut = 0.5):
 	out = cur.fetchone()
 	lastname = out['lastname']
 
+	candid_list = np.array([o['candid'] for o in candlist])
 	jd_list = np.array([o['jd'] for o in candlist])
+	ra_list = np.array([o['ra'] for o in candlist])
+	dec_list = np.array([o['dec'] for o in candlist])
 	num_cands = len(jd_list)
 	print('Found %d candidates to process'%(num_cands))
 	if num_cands == 0:
@@ -361,12 +514,24 @@ def main(nightid, redo = False, candlimit = 50000, rbcut = 0.5):
 	
 	schema = combine_schemas(["alert_schema/candidate.avsc", "alert_schema/prv_candidate.avsc", "alert_schema/alert.avsc"])
 	
+	if not skipss:
+		ssdists, ssmags, ssnames = doSScrossmatch(nightid, candid_list, jd_list, ra_list, dec_list)
+	
 	topicname = 'pgir_%s'%alert_date	
 	numgoodcands = 0
 	for i in range(num_cands):
-		rbscore = getscore(candlist[i], silent = True)		
-		candlist[i]['drb'] = rbscore
-		candlist[i]['drbversion'] = current_model_json
+		if skiprb:
+			candlist[i]['drb'] = candlist[i]['rbscore']
+			candlist[i]['drbversion'] = candlist[i]['rbver']
+		else:
+			rbscore = getscore(candlist[i], silent = True)		
+			candlist[i]['drb'] = rbscore
+			candlist[i]['drbversion'] = current_model_json
+			
+		if not skipss:
+			candlist[i]['ssdistnr'] = ssdists[i]
+			candlist[i]['ssmagnr'] = ssmags[i]
+			candlist[i]['ssnamenr'] = ssnames[i]
 		
 		if candlist[i]['drb'] >= rbcut:
 			numgoodcands += 1
@@ -414,13 +579,11 @@ if __name__ == '__main__':
 	import argparse
 
 	parser = argparse.ArgumentParser(description = 'Code to produce kafka stream for PGIR transients and send to IPAC topic')
-	parser.add_argument('nightid', help = 'Night ID for cross-match')
+	parser.add_argument('nightid', help = 'Night ID for cross-match', type = int)
 	parser.add_argument('--redo', help = 'Add to resend sources that have already been sent', action = 'store_true', default = False)
+	parser.add_argument('--skiprb', help = 'Add to skip RB computation and use only candidates with existing RBs', action = 'store_true', default = False)
+	parser.add_argument('--skipss', help = 'Add to skip SS crossmatch and use only candidates with existing SS crossmatch', action = 'store_true', default = False)
 	args = parser.parse_args()
 
-	redo = False
-	nightid = args.nightid
-	if args.redo:
-		redo = True
-	main(int(nightid), redo = redo)
+	main(args.nightid, redo = args.redo, skiprb = args.skiprb, skipss = args.skipss)
 	
