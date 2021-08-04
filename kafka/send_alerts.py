@@ -495,7 +495,11 @@ def main(nightid, redo = False, skiprb = False, skipss = False, candlimit = 1000
 		
 	if skipss:
 		print('Skiping SS crossmatch and using only SS existing candidates')
-		query = query.replace('WHERE', 'WHERE cand.ssdistnr != -99 AND')
+		#At this time, there is nothing that says that a SS crossmatch has taken place
+		#So we rely only the rbscore criteria to determine this
+		query = query.replace('WHERE', 'WHERE cand.rbscore != -1 AND')
+		
+	print(query)
 	
 	cur.execute(query)
 	candlist = cur.fetchall()
@@ -588,11 +592,21 @@ if __name__ == '__main__':
 	import argparse
 
 	parser = argparse.ArgumentParser(description = 'Code to produce kafka stream for PGIR transients and send to IPAC topic')
-	parser.add_argument('nightid', help = 'Night ID for cross-match', type = int)
+	parser.add_argument('nightid', help = 'Night ID for cross-match; Use -1 for today', type = int)
 	parser.add_argument('--redo', help = 'Add to resend sources that have already been sent', action = 'store_true', default = False)
 	parser.add_argument('--skiprb', help = 'Add to skip RB computation and use only candidates with existing RBs', action = 'store_true', default = False)
 	parser.add_argument('--skipss', help = 'Add to skip SS crossmatch and use only candidates with existing SS crossmatch', action = 'store_true', default = False)
 	args = parser.parse_args()
-
-	main(args.nightid, redo = args.redo, skiprb = args.skiprb, skipss = args.skipss)
+	
+	dateNow = datetime.now()                #local time
+	dateUTCNow = datetime.utcnow()          # UTC now
+	
+	nightid = args.nightid
+	if nightid == -1:
+		#Compute current night ID
+		nightid = (dateNow - drpRefDate).days
+	
+	print('Running at %s. Night ID is %d .. looking for new candidates'%(dateNow, nightid))
+	
+	main(nightid, redo = args.redo, skiprb = args.skiprb, skipss = args.skipss)
 	
