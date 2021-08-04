@@ -5,6 +5,7 @@ import dbOps
 #Should be loaded in at the beginning of the pipeline
 from keras import optimizers
 import gzip
+import re
 from keras.models import model_from_json
 # Should be loaded in once at the beginning of the pipeline
 # taken from https://machinelearningmastery.com/save-load-keras-deep-learning-models/
@@ -21,6 +22,12 @@ loaded_model.load_weights(json_directory+current_model_h5)
 print("Loaded model from disk")
 # evaluate loaded model on test data
 loaded_model.compile(loss='binary_crossentropy', optimizer=optimizers.adam(lr=3e-4), metrics=['accuracy'])
+
+#Some SS crossmatch parameters
+mpc_cat_folder = '/data/kde/catalogs/mpc/'
+mpc_night_folder = './nightfiles/'
+candlimit = 100000
+ast_cm_radius = 100.0 # arcsec
 
 	
 def combine_schemas(schema_files):
