@@ -5,7 +5,6 @@ import dbOps
 #Should be loaded in at the beginning of the pipeline
 from keras import optimizers
 import gzip
-import re
 from keras.models import model_from_json
 # Should be loaded in once at the beginning of the pipeline
 # taken from https://machinelearningmastery.com/save-load-keras-deep-learning-models/
@@ -22,13 +21,6 @@ loaded_model.load_weights(json_directory+current_model_h5)
 print("Loaded model from disk")
 # evaluate loaded model on test data
 loaded_model.compile(loss='binary_crossentropy', optimizer=optimizers.adam(lr=3e-4), metrics=['accuracy'])
-
-#Some SS crossmatch parameters
-mpc_cat_folder = '/data/kde/catalogs/mpc/'
-hold_file = '/data/kde/utils/kafka_running.txt'
-mpc_night_folder = './nightfiles/'
-candlimit = 100000
-ast_cm_radius = 100.0 # arcsec
 
 	
 def combine_schemas(schema_files):
@@ -61,7 +53,7 @@ def load_single_avsc(file_path, names):
 	return schema
 
 
-def send(topicname, records, schema):
+def save(candid, records, schema):
 	""" Send an avro "packet" to a particular topic at IPAC
 	Parameters
 	----------
@@ -72,19 +64,13 @@ def send(topicname, records, schema):
 	# Parse the schema file
 	#schema_definition = fastavro.schema.load_schema(schemafile)
 
-	# Write into an in-memory "file"
+	# Write into a file on disk
 
-	out = BytesIO()
+	out = open('%d.avro'%candid, 'wb')
 	
 	fastavro.writer(out, schema, records)
-	out.seek(0) # go back to the beginning
 	
-	# Connect to the IPAC Kafka brokers
-	producer = confluent_kafka.Producer({'bootstrap.servers': 'ztfalerts04.ipac.caltech.edu:9092,ztfalerts05.ipac.caltech.edu:9092,ztfalerts06.ipac.caltech.edu:9092'})
-
-	# Send an avro alert
-	producer.produce(topic=topicname, value=out.read())
-	producer.flush()
+	out.close()
 	
 
 # Function for predicting RB score
@@ -122,148 +108,6 @@ def getscore(canddict, silent = False):
 	if not silent:
 		print('Candid %d got rbscore of %.2f from nightid %d'%(canddict['candid'], rbscore, canddict['nid']))
 	return float(rbscore)
-	
-	
-def read_astcheck_file(astfile):
-	output = astfile.readlines()
-	
-	output = [x.strip() for x in output]
-	candnums = []
-	ssdists = []
-	ssmags = []
-	ssnames = []
-
-	for i in range(len(output)):
-		line = output[i]
-		words = line.split()
-		if 'only' in words:
-			candnum = int(line.split()[0][:-1])
-
-			if len(candnums)!=0 and candnum < max(candnums):
-				print('ERROR: Looks like an object is missing in the cross-match .. Exit')
-				sys.exit(1)
-
-			candline = output[i+1]
-			if len(candline.split()) == 0:
-				ssdist = -99
-				ssmag = -99
-				ssname = 'NONE'
-
-			else:
-				if re.search('[a-zA-Z]', candline.split()[1]):
-					try:
-						ssdist = float(candline.split()[4])
-					except ValueError:
-						print('Could not parse distance for candidate %d'%candnum)
-						ssdist = -999
-					try:
-						ssmag = float(candline.split()[5])
-					except ValueError:
-						print('Could not parse mag for candidate %d'%candnum)
-						ssmag = -999
-					try:
-						ssname = " ".join(candline.split()[0:2])
-					except ValueError:
-						print('Could not parse name for candidate %d'%candnum)
-						ssname = 'ERROR'
-						
-				else:
-					try:
-						ssdist = float(candline.split()[3])
-					except ValueError:
-						print('Could not parse distance for candidate %d'%candnum)
-						ssdist = -999
-					try:
-						ssmag = float(candline.split()[4])
-					except ValueError:
-						print('Could not parse mag for candidate %d'%candnum)
-						ssmag = -999
-					try:
-						ssname = candline.split()[0]
-					except ValueError:
-						print('Could not parse name for candidate %d'%candnum)
-						ssname = 'ERROR'
-						
-				print('Candidate number %d is %.2f arcsec away from %.2f mag rock %s'%(candnum, ssdist, ssmag, ssname))
-			
-			candnums.append(candnum)
-			ssdists.append(ssdist)
-			ssmags.append(ssmag)
-			ssnames.append(ssname)
-			
-	return np.array(candnums), np.array(ssdists), np.array(ssmags), np.array(ssnames)
-	
-	
-def ss_crossmatch(nightid, jd_list, ra_list, dec_list):
-
-	print('Doing asteroid cross-matches for %d candidates .. '%len(jd_list))
-	#Now do the asteroid cross-matches
-	curdir = os.getcwd()
-	os.chdir(mpc_cat_folder)
-	astp_timelist = Time(jd_list, format = 'jd')
-	sky_coord_list = SkyCoord(ra = ra_list, dec = dec_list, unit = 'degree', frame = 'icrs')
-	
-	candlistfile = mpc_night_folder + 'sscm_nightid%d.txt'%nightid
-	
-	f = open(candlistfile, 'w')
-	for i in range(len(ra_list)):
-		year = astp_timelist[i].datetime.year
-		month = astp_timelist[i].datetime.month
-		day = astp_timelist[i].datetime.day
-		datefrac = (astp_timelist[i].datetime.hour + astp_timelist[i].datetime.minute / 60 + astp_timelist[i].datetime.second / 3600) / 24.0
-		rahour = sky_coord_list[i].ra.hms.h
-		ramin = sky_coord_list[i].ra.hms.m
-		rasec = sky_coord_list[i].ra.hms.s
-		decdeg = sky_coord_list[i].dec.dms.d
-		decmin = sky_coord_list[i].dec.dms.m
-		decsec = sky_coord_list[i].dec.dms.s
-
-		if decdeg < 0 or decmin < 0 or decsec <0:
-			f.write('%12d  C%d %02d %08.5f %02d %02d %05.2f -%02d %02d %04.1f          99.9 f      I41\n'%(i, year, month, day + datefrac, rahour, ramin, rasec, abs(decdeg), abs(decmin), abs(decsec)))
-		else:
-			f.write('%12d  C%d %02d %08.5f %02d %02d %05.2f +%02d %02d %04.1f          99.9 f      I41\n'%(i, year, month, day + datefrac, rahour, ramin, rasec, abs(decdeg), abs(decmin), abs(decsec)))
-
-	f.close()
-	
-	astcheck_command = ['lunar/astcheck', candlistfile, '-p.', '-r%.2f'%ast_cm_radius]
-	print(astcheck_command)
-	#if os.path.exists(candlistfile + '.astcheck'):
-	#	os.remove(candlistfile + '.astcheck')
-
-	try:
-		rval = subprocess.run(astcheck_command, check = True, stdout = subprocess.PIPE)
-	except subprocess.CalledProcessError as err:
-		print('Could not run astcheck .. ')
-		return
-
-	f = open(candlistfile + '.astcheck', 'w')
-	f.write(rval.stdout.decode('utf-8'))
-	f.close()
-	
-	os.chdir(curdir)
-
-	return mpc_cat_folder + candlistfile
-	
-	
-	
-def doSScrossmatch(nightid, candid_list, jd_list, ra_list, dec_list):
-
-	candlistfile = ss_crossmatch(nightid, jd_list, ra_list, dec_list)
-	#DO THE ASTEROID CROSS_MATCHES HERE
-	if candlistfile is not None:
-		g = open(candlistfile + '.astcheck', 'r')
-		candnums, ssdists, ssmags, ssnames = read_astcheck_file(g)
-		g.close()
-	else:
-		ssdists = [-999 for c in candid_list]
-		ssmags = [-999 for c in candid_list]
-		ssnames = ['FAILED' for c in candid_list]
-
-	if len(ssdists) != len(candid_list):
-		print('ERROR: List of MPC candidates not the same as input candidates')
-		return None, None, None
-	
-	return ssdists, ssmags, ssnames
 	
 
 def create_alert_packet(cand, scicut, refcut, diffcut, cur, conn, cm_radius = 8.0, search_history = 90.0): #cross-match radius in arcsec, history in days
@@ -348,26 +192,19 @@ def create_alert_packet(cand, scicut, refcut, diffcut, cur, conn, cm_radius = 8.
 		
 	return alert
 	
-	
-	
-def broadcast_alert_packet(cand, scicut, refcut, diffcut, topicname, schema, mycandnum, numcands):
+def save_alert_packet(cand, scicut, refcut, diffcut, schema):
 		
 	#Connect to PGIR DB
 	conn, cur = dbOps.getDBCursor(silent = True)	
 	
 	pkt = create_alert_packet(cand, scicut, refcut, diffcut, cur, conn)
 	try:
-		send(topicname, [pkt], schema)
-		dbOps.updateSingleTab(cur, conn, 'candidates', ['sent_kafka'], ['t'], 'candid', cand['candid'])
-		print('Sent candid %d name %s, %d out of %d'%(cand['candid'], cand['objectId'], mycandnum, numcands))
+		save(cand['candid'], [pkt], schema)
+		print('Saved candid %d name %s'%(cand['candid'], cand['objectId']))
 		dbOps.closeCursor(conn, cur, silent = True)
-		return cand['candid']
 	except OSError:
 		print('Could not send candid %d'%cand['candid'])
 		dbOps.closeCursor(conn, cur, silent = True)
-		return -1
-		
-		
 		
 def get_next_name(lastname, candjd, bwfile = 'badwords.txt', basename = 'PGIR', begcount = 'aaaaaa'):
 
@@ -455,7 +292,7 @@ def check_and_insert_source(conn, cur, candname, ra, dec, candid, cm_radius = 8.
 
 		
 
-def main(nightid, redo = False, skiprb = False, skipss = False, candlimit = 10000, rbcut = 0.5):
+def main(candid):
 	
 	t0 = time.time()
 	#Connect to PGIR DB
@@ -469,7 +306,7 @@ def main(nightid, redo = False, skiprb = False, skipss = False, candlimit = 1000
 		"cand.mag as magap, cand.mag_err as sigmagap, cand.fwhm, cand.a_psf as aimage, "\
 		"cand.b_psf as bimage, cand.a_psf/cand.b_psf as elong, cand.numnegpix as nneg, "\
 		"cand.ssdistnr, cand.ssmagnr, cand.ssnamenr, cand.isstar, cand.sumrat, cand.dmag2mass,"\
-		"cand.distnearbrstar, cand.rbscore, cand.rbver, "\
+		"cand.distnearbrstar, "\
 		"cand.magnearbrstar, cand.sci_weight as sciweight, cand.ref_weight as refweight, "\
 		"cand.tmmag1, cand.tmdist1, cand.tmmag2, cand.tmdist2, cand.tmmag3, cand.tmdist3, "\
 		"cand.nmatches as ndethist, cand.firstdet as jdstarthist, cand.scorr_peak as scorr, "\
@@ -484,24 +321,8 @@ def main(nightid, redo = False, skiprb = False, skipss = False, candlimit = 1000
 		"INNER JOIN splitstacks ss ON ss.stackquadid = sub.stackquadid "\
 		"INNER JOIN squadphoto sp ON sp.stackquadid = ss.stackquadid "\
 		"INNER JOIN reference_new ref ON ref.refid = cand.refid "\
-		"WHERE cand.nightid=%d ORDER BY cand.jd ASC LIMIT %d;"%(nightid, candlimit)
+		"WHERE cand.candid=%d;"%(candid)
 
-	if not redo:
-		print('Skipping done sources..')
-		query = query.replace('ORDER', 'AND (NOT sent_kafka OR sent_kafka IS NULL) ORDER')
-		
-	if skiprb:
-		print('Skipping RB computation and using only RB-existing candidates')
-		query = query.replace('WHERE', 'WHERE cand.rbscore != -1 AND')
-		
-	if skipss:
-		print('Skiping SS crossmatch and using only SS existing candidates')
-		#At this time, there is nothing that says that a SS crossmatch has taken place
-		#So we rely only the rbscore criteria to determine this
-		query = query.replace('WHERE', 'WHERE cand.rbscore != -1 AND')
-		
-	print(query)
-	
 	cur.execute(query)
 	candlist = cur.fetchall()
 	
@@ -511,13 +332,10 @@ def main(nightid, redo = False, skiprb = False, skipss = False, candlimit = 1000
 	out = cur.fetchone()
 	lastname = out['lastname']
 
-	candid_list = np.array([o['candid'] for o in candlist])
 	jd_list = np.array([o['jd'] for o in candlist])
-	ra_list = np.array([o['ra'] for o in candlist])
-	dec_list = np.array([o['dec'] for o in candlist])
 	num_cands = len(jd_list)
 	print('Found %d candidates to process'%(num_cands))
-	if num_cands == 0:
+	if num_cands != 1:
 		return 0
 	
 	#Calculate the alert_date for this night
@@ -526,65 +344,31 @@ def main(nightid, redo = False, skiprb = False, skipss = False, candlimit = 1000
 	
 	schema = combine_schemas(["alert_schema/candidate.avsc", "alert_schema/prv_candidate.avsc", "alert_schema/alert.avsc"])
 	
-	if not skipss:
-		ssdists, ssmags, ssnames = doSScrossmatch(nightid, candid_list, jd_list, ra_list, dec_list)
-	
-	topicname = 'pgir_%s'%alert_date	
 	numgoodcands = 0
-	for i in range(num_cands):
-		if skiprb:
-			candlist[i]['drb'] = candlist[i]['rbscore']
-			candlist[i]['drbversion'] = candlist[i]['rbver']
-		else:
-			rbscore = getscore(candlist[i], silent = True)		
-			candlist[i]['drb'] = rbscore
-			candlist[i]['drbversion'] = current_model_json
-			
-		if not skipss:
-			candlist[i]['ssdistnr'] = ssdists[i]
-			candlist[i]['ssmagnr'] = ssmags[i]
-			candlist[i]['ssnamenr'] = ssnames[i]
-		
-		if candlist[i]['drb'] >= rbcut:
-			numgoodcands += 1
-		
-		candname = get_next_name(lastname, candlist[i]['jd'])
-		
-		candname, newstatus = check_and_insert_source(conn, cur, candname, candlist[i]['ra'], candlist[i]['dec'], candlist[i]['candid'])
-		if newstatus:
-			lastname = candname
-			candlist[i]['objectId'] = candname
-		else:
-			candlist[i]['objectId'] = candname
-			continue
-		
-		
-	#Now create and broadcast alert packets in parallel
-	pool = mp.Pool(processes = 10)
-	process_list = []
-	goodcandcount = 0
-	for i in range(num_cands):
-		if candlist[i]['drb'] < rbcut:
-			dbOps.updateSingleTab(cur, conn, 'candidates', ['sent_kafka'], ['t'], 'candid', candlist[i]['candid'])
-			print('Candidate %d Object %s with low RB %.2f not sent'%(candlist[i]['candid'], candlist[i]['objectId'], candlist[i]['drb']))
-			continue
-			
-		goodcandcount += 1
-		canddict = candlist[i].copy()
-		#converting memoryview cutouts to bytes before sending to parallelized broadcast
-		scicut = io.BytesIO(canddict.pop('sci_image')).read()
-		refcut = io.BytesIO(canddict.pop('ref_image')).read()
-		diffcut = io.BytesIO(canddict.pop('diff_image')).read()
-		process_list.append(pool.apply_async(broadcast_alert_packet, args = (canddict, scicut, refcut, diffcut, topicname, schema, goodcandcount, numgoodcands,)))
+	rbscore = getscore(candlist[0], silent = True)		
+	candlist[0]['drb'] = rbscore
+	candlist[0]['drbversion'] = current_model_json
 	
-	#Run all the broadcasts in parallel
-	num_broadcast = len(process_list)
-	results = [p.get() for p in process_list]
-	pool.close()
+	candname = get_next_name(lastname, candlist[0]['jd'])
+		
+	candname, newstatus = check_and_insert_source(conn, cur, candname, candlist[0]['ra'], candlist[0]['dec'], candlist[0]['candid'])
+	if newstatus:
+		lastname = candname
+		candlist[0]['objectId'] = candname
+	else:
+		candlist[0]['objectId'] = candname
+		
+		
+	canddict = candlist[0].copy()
+	#converting memoryview cutouts to bytes before sending to parallelized broadcast
+	scicut = io.BytesIO(canddict.pop('sci_image')).read()
+	refcut = io.BytesIO(canddict.pop('ref_image')).read()
+	diffcut = io.BytesIO(canddict.pop('diff_image')).read()
+	
+	save_alert_packet(canddict, scicut, refcut, diffcut, schema)
 	
 	t1 = time.time()
-	print('Took %.2f seconds to process %d candidates and broadcast %d candidates'%(t1 - t0, num_cands, num_broadcast))
-	
+	print('Took %.2f seconds to process %d candidates'%(t1 - t0, num_cands))
 	
 	dbOps.closeCursor(conn, cur)
 	
@@ -592,32 +376,10 @@ def main(nightid, redo = False, skiprb = False, skipss = False, candlimit = 1000
 if __name__ == '__main__':
 	import argparse
 
-	parser = argparse.ArgumentParser(description = 'Code to produce kafka stream for PGIR transients and send to IPAC topic')
-	parser.add_argument('nightid', help = 'Night ID for cross-match; Use -1 for today', type = int)
-	parser.add_argument('--redo', help = 'Add to resend sources that have already been sent', action = 'store_true', default = False)
-	parser.add_argument('--skiprb', help = 'Add to skip RB computation and use only candidates with existing RBs', action = 'store_true', default = False)
-	parser.add_argument('--skipss', help = 'Add to skip SS crossmatch and use only candidates with existing SS crossmatch', action = 'store_true', default = False)
+	parser = argparse.ArgumentParser(description = 'Code to produce AVRO packet for PGIR candidate ID')
+	parser.add_argument('candid', help = 'Candidate ID to process')
 	args = parser.parse_args()
-	
-	dateNow = datetime.now()                #local time
-	dateUTCNow = datetime.utcnow()          # UTC now
-	
-	if os.path.exists(hold_file):
-		print('Another kafka upload instance running -- will not run..')
-		sys.exit(1)
-		
-	f = open(hold_file, 'w')
-	f.write(dateNow.strftime('%Y %M %D %H:%M:%S'))
-	f.close()
-	
-	nightid = args.nightid
-	if nightid == -1:
-		#Compute current night ID
-		nightid = (dateNow - drpRefDate).days
-	
-	print('Running at %s. Night ID is %d .. looking for new candidates'%(dateNow, nightid))
-	
-	main(nightid, redo = args.redo, skiprb = args.skiprb, skipss = args.skipss)
-	
-	os.remove(hold_file)
+
+	candid = args.candid
+	main(int(candid))
 	
