@@ -560,6 +560,8 @@ def main(nightid, redo = False, skiprb = False, skipss = False, candlimit = 1000
 	goodcandcount = 0
 	for i in range(num_cands):
 		if candlist[i]['drb'] < rbcut:
+			dbOps.updateSingleTab(cur, conn, 'candidates', ['sent_kafka'], ['t'], 'candid', candlist[i]['candid'])
+			print('Candidate %d Object %s with low RB %.2f not sent'%(candlist[i]['candid'], candlist[i]['objectId'], candlist[i]['drb']))
 			continue
 			
 		goodcandcount += 1
