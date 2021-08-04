@@ -25,6 +25,7 @@ loaded_model.compile(loss='binary_crossentropy', optimizer=optimizers.adam(lr=3e
 
 #Some SS crossmatch parameters
 mpc_cat_folder = '/data/kde/catalogs/mpc/'
+hold_file = '/data/kde/utils/kafka_running.txt'
 mpc_night_folder = './nightfiles/'
 candlimit = 100000
 ast_cm_radius = 100.0 # arcsec
@@ -601,6 +602,14 @@ if __name__ == '__main__':
 	dateNow = datetime.now()                #local time
 	dateUTCNow = datetime.utcnow()          # UTC now
 	
+	if os.path.exists(hold_file):
+		print('Another kafka upload instance running -- will not run..')
+		sys.exit(1)
+		
+	f = open(hold_file, 'w')
+	f.write(dateNow.strftime('%Y %M %D %H:%M:%S'))
+	f.close()
+	
 	nightid = args.nightid
 	if nightid == -1:
 		#Compute current night ID
@@ -609,4 +618,6 @@ if __name__ == '__main__':
 	print('Running at %s. Night ID is %d .. looking for new candidates'%(dateNow, nightid))
 	
 	main(nightid, redo = args.redo, skiprb = args.skiprb, skipss = args.skipss)
+	
+	os.remove(hold_file)
 	
